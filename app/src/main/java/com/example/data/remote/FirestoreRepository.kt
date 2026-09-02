@@ -1,5 +1,6 @@
 package com.example.data.remote
 
+import android.content.Context
 import android.util.Log
 import com.example.data.local.Converters
 import com.example.data.local.InterviewDao
@@ -8,18 +9,30 @@ import com.example.data.local.UserPreferencesManager
 import com.example.data.model.InterviewReport
 import com.example.data.model.InterviewTurn
 import com.example.data.model.UserProfile
+import com.google.firebase.FirebaseApp
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 
-class FirestoreRepository {
-    private val firestore: FirebaseFirestore by lazy { FirebaseFirestore.getInstance() }
+class FirestoreRepository(context: Context? = null) {
+    private val firestore: FirebaseFirestore? by lazy {
+        try {
+            if (context != null && FirebaseApp.getApps(context).isEmpty()) {
+                FirebaseApp.initializeApp(context)
+            }
+            FirebaseFirestore.getInstance()
+        } catch (e: Exception) {
+            Log.w("FirestoreRepository", "Firestore not available / not configured: ${e.message}")
+            null
+        }
+    }
     private val converters = Converters()
 
     suspend fun saveUserProfile(userId: String, profile: UserProfile): Boolean = withContext(Dispatchers.IO) {
         if (userId.isEmpty() || userId == "local_user") return@withContext false
+        val db = firestore ?: return@withContext false
         try {
             val userMap = hashMapOf(
                 "id" to userId,
@@ -38,7 +51,7 @@ class FirestoreRepository {
                 "isOnboarded" to profile.isOnboarded,
                 "updatedAt" to System.currentTimeMillis()
             )
-            firestore.collection("users").document(userId)
+            db.collection("users").document(userId)
                 .set(userMap, SetOptions.merge())
                 .await()
             Log.d("FirestoreRepository", "Saved user profile to Firestore for user: $userId")
@@ -51,8 +64,9 @@ class FirestoreRepository {
 
     suspend fun getUserProfile(userId: String): UserProfile? = withContext(Dispatchers.IO) {
         if (userId.isEmpty() || userId == "local_user") return@withContext null
+        val db = firestore ?: return@withContext null
         try {
-            val snapshot = firestore.collection("users").document(userId).get().await()
+            val snapshot = db.collection("users").document(userId).get().await()
             if (snapshot.exists()) {
                 val data = snapshot.data ?: return@withContext null
                 @Suppress("UNCHECKED_CAST")
@@ -87,6 +101,7 @@ class FirestoreRepository {
 
     suspend fun saveInterviewSession(userId: String, entity: InterviewEntity): Boolean = withContext(Dispatchers.IO) {
         if (userId.isEmpty() || userId == "local_user") return@withContext false
+        val db = firestore ?: return@withContext false
         try {
             val turnsJson = converters.fromTurnsList(entity.turns)
             val reportJson = converters.fromReport(entity.report)
@@ -110,7 +125,7 @@ class FirestoreRepository {
                 "updatedAt" to System.currentTimeMillis()
             )
 
-            firestore.collection("users").document(userId)
+            db.collection("users").document(userId)
                 .collection("interviews").document(entity.id)
                 .set(sessionMap, SetOptions.merge())
                 .await()
@@ -124,8 +139,9 @@ class FirestoreRepository {
 
     suspend fun fetchUserInterviews(userId: String): List<InterviewEntity> = withContext(Dispatchers.IO) {
         if (userId.isEmpty() || userId == "local_user") return@withContext emptyList()
+        val db = firestore ?: return@withContext emptyList()
         try {
-            val querySnapshot = firestore.collection("users").document(userId)
+            val querySnapshot = db.collection("users").document(userId)
                 .collection("interviews")
                 .orderBy("timestamp", com.google.firebase.firestore.Query.Direction.DESCENDING)
                 .get()
@@ -164,7 +180,7 @@ class FirestoreRepository {
         localDao: InterviewDao,
         preferences: UserPreferencesManager
     ) = withContext(Dispatchers.IO) {
-        if (userId.isEmpty() || userId == "local_user") return@withContext
+        if (userId.isEmpty() || userId == "local_user" || firestore == null) return@withContext
         try {
             // 1. Check if user profile exists on cloud
             val cloudProfile = getUserProfile(userId)

@@ -9,6 +9,7 @@ import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialException
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
@@ -19,8 +20,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
-import java.security.MessageDigest
-import java.util.UUID
 
 sealed class AuthState {
     object Idle : AuthState()
@@ -29,8 +28,18 @@ sealed class AuthState {
     data class Error(val message: String) : AuthState()
 }
 
-class FirebaseAuthManager {
-    private val auth: FirebaseAuth by lazy { FirebaseAuth.getInstance() }
+class FirebaseAuthManager(context: Context? = null) {
+    private val auth: FirebaseAuth? by lazy {
+        try {
+            if (context != null && FirebaseApp.getApps(context).isEmpty()) {
+                FirebaseApp.initializeApp(context)
+            }
+            FirebaseAuth.getInstance()
+        } catch (e: Exception) {
+            Log.w("FirebaseAuthManager", "Firebase Auth not available / not configured: ${e.message}")
+            null
+        }
+    }
 
     private val _currentUser = MutableStateFlow<FirebaseUser?>(null)
     val currentUser: StateFlow<FirebaseUser?> = _currentUser.asStateFlow()
@@ -40,11 +49,13 @@ class FirebaseAuthManager {
 
     init {
         try {
-            _currentUser.value = auth.currentUser
-            auth.addAuthStateListener { firebaseAuth ->
-                val user = firebaseAuth.currentUser
-                _currentUser.value = user
-                _authState.value = if (user != null) AuthState.Authenticated(user) else AuthState.Idle
+            auth?.let { firebaseAuth ->
+                _currentUser.value = firebaseAuth.currentUser
+                firebaseAuth.addAuthStateListener { fa ->
+                    val user = fa.currentUser
+                    _currentUser.value = user
+                    _authState.value = if (user != null) AuthState.Authenticated(user) else AuthState.Idle
+                }
             }
         } catch (e: Exception) {
             Log.e("FirebaseAuthManager", "Error initializing auth state listener", e)
@@ -56,6 +67,13 @@ class FirebaseAuthManager {
         serverClientId: String = ""
     ): Result<FirebaseUser> = withContext(Dispatchers.IO) {
         _authState.value = AuthState.Loading
+        val firebaseAuth = auth
+        if (firebaseAuth == null) {
+            val err = "Firebase is not configured in this environment. Local profile mode is active."
+            _authState.value = AuthState.Error(err)
+            return@withContext Result.failure(Exception(err))
+        }
+
         try {
             val credentialManager = CredentialManager.create(context)
             
@@ -67,7 +85,6 @@ class FirebaseAuthManager {
             if (serverClientId.isNotEmpty()) {
                 googleIdOptionBuilder.setServerClientId(serverClientId)
             } else {
-                // Default fallback client if not explicitly configured
                 googleIdOptionBuilder.setServerClientId("dummy-client-id.apps.googleusercontent.com")
             }
 
@@ -85,7 +102,7 @@ class FirebaseAuthManager {
                 val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
                 val idToken = googleIdTokenCredential.idToken
                 val authCredential = GoogleAuthProvider.getCredential(idToken, null)
-                val authResult = auth.signInWithCredential(authCredential).await()
+                val authResult = firebaseAuth.signInWithCredential(authCredential).await()
                 val user = authResult.user ?: throw Exception("Firebase user is null after sign in")
                 _currentUser.value = user
                 _authState.value = AuthState.Authenticated(user)
@@ -105,8 +122,15 @@ class FirebaseAuthManager {
 
     suspend fun signInWithEmail(email: String, pass: String): Result<FirebaseUser> = withContext(Dispatchers.IO) {
         _authState.value = AuthState.Loading
+        val firebaseAuth = auth
+        if (firebaseAuth == null) {
+            val err = "Firebase is not configured in this environment. Local profile mode is active."
+            _authState.value = AuthState.Error(err)
+            return@withContext Result.failure(Exception(err))
+        }
+
         try {
-            val authResult = auth.signInWithEmailAndPassword(email.trim(), pass).await()
+            val authResult = firebaseAuth.signInWithEmailAndPassword(email.trim(), pass).await()
             val user = authResult.user ?: throw Exception("User not found")
             _currentUser.value = user
             _authState.value = AuthState.Authenticated(user)
@@ -119,8 +143,15 @@ class FirebaseAuthManager {
 
     suspend fun signUpWithEmail(email: String, pass: String, displayName: String): Result<FirebaseUser> = withContext(Dispatchers.IO) {
         _authState.value = AuthState.Loading
+        val firebaseAuth = auth
+        if (firebaseAuth == null) {
+            val err = "Firebase is not configured in this environment. Local profile mode is active."
+            _authState.value = AuthState.Error(err)
+            return@withContext Result.failure(Exception(err))
+        }
+
         try {
-            val authResult = auth.createUserWithEmailAndPassword(email.trim(), pass).await()
+            val authResult = firebaseAuth.createUserWithEmailAndPassword(email.trim(), pass).await()
             val user = authResult.user ?: throw Exception("Account creation failed")
             if (displayName.isNotBlank()) {
                 val profileUpdates = UserProfileChangeRequest.Builder()
@@ -139,8 +170,15 @@ class FirebaseAuthManager {
 
     suspend fun signInAnonymously(): Result<FirebaseUser> = withContext(Dispatchers.IO) {
         _authState.value = AuthState.Loading
+        val firebaseAuth = auth
+        if (firebaseAuth == null) {
+            val err = "Firebase is not configured in this environment. Local profile mode is active."
+            _authState.value = AuthState.Error(err)
+            return@withContext Result.failure(Exception(err))
+        }
+
         try {
-            val authResult = auth.signInAnonymously().await()
+            val authResult = firebaseAuth.signInAnonymously().await()
             val user = authResult.user ?: throw Exception("Anonymous sign in failed")
             _currentUser.value = user
             _authState.value = AuthState.Authenticated(user)
@@ -153,7 +191,7 @@ class FirebaseAuthManager {
 
     fun signOut() {
         try {
-            auth.signOut()
+            auth?.signOut()
             _currentUser.value = null
             _authState.value = AuthState.Idle
         } catch (e: Exception) {
@@ -162,18 +200,18 @@ class FirebaseAuthManager {
     }
 
     fun isUserLoggedIn(): Boolean {
-        return auth.currentUser != null
+        return auth?.currentUser != null
     }
 
     fun getCurrentUserId(): String {
-        return auth.currentUser?.uid ?: "local_user"
+        return auth?.currentUser?.uid ?: "local_user"
     }
 
     fun getCurrentUserEmail(): String {
-        return auth.currentUser?.email ?: ""
+        return auth?.currentUser?.email ?: ""
     }
 
     fun getCurrentUserName(): String {
-        return auth.currentUser?.displayName ?: ""
+        return auth?.currentUser?.displayName ?: ""
     }
 }

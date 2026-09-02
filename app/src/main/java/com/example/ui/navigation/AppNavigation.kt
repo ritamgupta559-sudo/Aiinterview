@@ -55,7 +55,7 @@ fun AppNavigation() {
 
     val database = remember { AppDatabase.getDatabase(context) }
     val preferences = remember { UserPreferencesManager(context) }
-    val repository = remember { InterviewRepository(database.interviewDao(), preferences) }
+    val repository = remember { InterviewRepository(database.interviewDao(), preferences, context = context.applicationContext) }
 
     val userProfile by repository.userProfile.collectAsState()
     val allInterviews by repository.allInterviews.collectAsState(initial = emptyList())

@@ -1,5 +1,6 @@
 package com.example.data.repository
 
+import android.content.Context
 import com.example.data.auth.FirebaseAuthManager
 import com.example.data.local.InterviewDao
 import com.example.data.local.InterviewEntity
@@ -23,9 +24,10 @@ import java.util.UUID
 class InterviewRepository(
     private val interviewDao: InterviewDao,
     private val preferencesManager: UserPreferencesManager,
+    private val context: Context? = null,
     private val aiEngine: InterviewAiEngine = InterviewAiEngine(),
-    val authManager: FirebaseAuthManager = FirebaseAuthManager(),
-    val firestoreRepository: FirestoreRepository = FirestoreRepository(),
+    val authManager: FirebaseAuthManager = FirebaseAuthManager(context),
+    val firestoreRepository: FirestoreRepository = FirestoreRepository(context),
     val transcriber: GeminiTranscriber = GeminiTranscriber()
 ) {
     private val repoScope = CoroutineScope(Dispatchers.IO)
@@ -111,8 +113,8 @@ class InterviewRepository(
         return aiEngine.parseResumeText(rawText)
     }
 
-    suspend fun transcribeSpeech(audioData: ByteArray, context: String = ""): TranscriptionResult {
-        return transcriber.transcribeAudio(audioData, context)
+    suspend fun transcribeSpeech(audioData: ByteArray, contextPrompt: String = ""): TranscriptionResult {
+        return transcriber.transcribeAudio(audioData, contextPrompt)
     }
 
     fun updateUserProfile(profile: UserProfile) {
