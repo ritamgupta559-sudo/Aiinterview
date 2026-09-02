@@ -1,0 +1,6 @@
+{
+  "name": "InterviewAI",
+  "description": "Face the AI before you face HR. Realistic AI job interview simulator and coach for Indian job seekers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
